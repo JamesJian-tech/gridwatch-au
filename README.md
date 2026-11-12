@@ -170,6 +170,27 @@ Doris 兼容 MySQL 协议，Grafana 里添加一个 MySQL 数据源，主机填 
 
 GitHub Actions 的机器每次跑完就销毁，只适合做验证。长期实时采集仍然放在家用服务器上，用 systemd 运行。
 
+### GitHub Pages 看板
+
+- **pages**（`.github/workflows/pages.yml`）：每 30 分钟从 NEMWEB 抓一次新的 DispatchIS 文件，生成静态看板并发布到 GitHub Pages。这个流程**不经过 Doris**。
+- **数据存放**：5 分钟级的区域数据和联络线数据，以每天一个 CSV 的形式存在 `site-data` 分支上。这个分支每次运行都强制覆盖成单个提交，所以仓库历史不会越来越大。
+- **生成和页面**：`python -m nemdoris pages` 读取这些 CSV，生成 `data/dashboard.json`；`site/` 里的静态页面用 ECharts 把它画出来。
+
+第一次使用：
+
+1. 打开仓库的 Settings → Pages → Build and deployment，把 Source 选为 **GitHub Actions**。
+2. 在 Actions 页面手动运行 pages，`backfill_from` 填 `90`，回填最近 90 天的数据。Archive 最多保留大约 13 个月，填 `400` 就是全部回填；每个日文件之间会停 1 秒。
+3. 之后定时任务会自动更新。
+
+本地预览：
+
+```bash
+.venv/bin/python -m nemdoris pages --store store --out site/data/dashboard.json --backfill-from 7
+python3 -m http.server -d site 8000      # 打开 http://localhost:8000
+```
+
+NEMWEB 每秒请求几次就会返回 403，所以每次下载之后都会暂停 1 秒；已经齐全的天数不会再从 Current/ 目录重复下载。
+
 ## 可以继续扩展的方向
 
 - `PREDISPATCH` / `P5MIN` 价格预测，对比预测与实际出清价

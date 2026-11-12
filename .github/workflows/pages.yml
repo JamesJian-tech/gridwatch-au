@@ -1,0 +1,93 @@
+# Static dashboard on GitHub Pages, no Doris involved.
+# Every 30 min: pull new NEMWEB DispatchIS files into the CSV store kept on the
+# `site-data` branch (force-pushed as one commit so history stays small), rebuild
+# data/dashboard.json, and deploy site/ + data to Pages.
+# One-time setup: Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
+name: pages
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      backfill_from:
+        description: "Also load NEMWEB Archive days from this NEM date (YYYY-MM-DD) or this many days ago (e.g. 90). Archive keeps ~13 months."
+        required: false
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "nemdoris/**"
+      - ".github/workflows/pages.yml"
+
+permissions:
+  contents: write # push the site-data branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install collector
+        run: pip install -r requirements.txt
+
+      - name: Fetch data store
+        run: |
+          if git ls-remote --exit-code --heads origin site-data >/dev/null; then
+            git clone --quiet --depth 1 --branch site-data \
+              "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" store
+            rm -rf store/.git
+          else
+            echo "no site-data branch yet: starting an empty store"
+            mkdir store
+          fi
+
+      - name: Update store and build dashboard JSON
+        env:
+          BACKFILL: ${{ inputs.backfill_from }}
+        run: |
+          mkdir -p _site/data
+          cp -R site/. _site/
+          python -m nemdoris pages --store store --out _site/data/dashboard.json \
+            ${BACKFILL:+--backfill-from "$BACKFILL"}
+
+      - name: Save data store
+        run: |
+          cd store
+          git init --quiet -b site-data
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit --quiet -m "data snapshot $(date -u +%FT%TZ)"
+          git push --quiet --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" site-data
+          du -sh .
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

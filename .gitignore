@@ -4,6 +4,11 @@
 # Doris data and logs (docker compose volumes)
 data/
 
+# Pages build output and local data store (the store lives on the site-data branch)
+_site/
+store/
+site/data/
+
 # Python
 .venv/
 __pycache__/
@@ -13,3 +18,4 @@ __pycache__/
 # OS / tooling
 .DS_Store
 .codegraph/
+.playwright-mcp/

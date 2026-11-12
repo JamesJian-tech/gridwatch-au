@@ -51,7 +51,20 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
 ## GitHub Actions
 
 - `.github/workflows/ci.yml`：每次 push 或开 PR 时，在 Python 3.10 和 3.13 上跑 `pytest`。
+- `.github/workflows/pages.yml`：每 30 分钟更新一次 GitHub Pages 看板，见下一节。
 - `.github/workflows/integration.yml`：在 `ubuntu-24.04` runner 上用 `docker compose` 起真实的 Doris，依次执行全部 SQL、回填 1 天、做完整性和幂等检查、`live --once`、`load-duid`、`03_analysis.sql` 和刷新物化视图。改动 `nemdoris/`、`sql/` 或 `docker-compose.yml` 会自动触发，每周一 06:00 AEST 也会定时跑一次。这是开发机上唯一能接触到真实 Doris 的验证途径，加新表或新检查时，在它的 Verify 步骤里补上对应的断言。
+
+## GitHub Pages 看板（`nemdoris/pages.py`、`site/`、`pages.yml`）
+
+这是独立于 Doris 的第二条数据链路：NEMWEB DispatchIS → `site-data` 分支上按天存放的 CSV → `dashboard.json` → `site/app.js`。
+
+- **对 NEMWEB 限速**：每秒请求几次就会被 NEMWEB 返回 403。每次下载后保持 `pause=1.0` 秒；已经齐全的天数（288 个区间 × 5 个区域）不再从 Current/ 下载。
+- **按天归档**：CSV 用区间**开始**时刻所在的那一天命名（`pages.nem_day`），所以 `00:00` 结束的区间属于前一天，每天正好 288 个区间。
+- **出错就停**：Current/ 下载失败时立刻停止，`state.json` 只推进到最后一个成功的文件，下次运行从失败的文件接着下载。如果上次处理到的文件已经不在 Current/ 里了（中间断档），从 Archive/ 补齐。
+- **数据存储分支**：`site-data` 分支每次都强制推送成单个提交，里面只有数据，没有代码。
+- **JSON 契约**：`dashboard.json` 的结构是 `pages.build` 和 `site/app.js` 之间的契约，改字段时两边一起改，并同步更新 `tests/test_pages.py::test_build_dashboard`。
+- **图表配色**：每个区域的颜色固定（`REGION_SLOT`），在所有图表里都一样。深浅两套色值都写在 `style.css` 的 CSS 变量里，已经通过 dataviz 色板校验。
+- **本地预览**：用 `python3 -m http.server -d site`，见 README。
 
 ## 文档约定
 
