@@ -73,16 +73,21 @@ jobs:
       - name: Start Doris
         run: docker compose up -d
 
+      # Alive comes with the first heartbeat; disks arrive with the BE's first report a bit
+      # later. Non-partitioned tables (duid_info) need a disk at CREATE time, so wait for both.
       - name: Wait for FE and BE
         run: |
           for i in $(seq 1 90); do
-            if $MYSQL -e 'SHOW BACKENDS\G' 2>/dev/null | grep -q 'Alive: true'; then
-              $MYSQL -e 'SELECT VERSION()'
+            info=$($MYSQL -e 'SHOW BACKENDS\G' 2>/dev/null || true)
+            avail=$(awk '/AvailCapacity:/{print $2; exit}' <<<"$info")
+            if grep -q 'Alive: true' <<<"$info" && awk -v a="${avail:-0}" 'BEGIN{exit !(a+0 > 0)}'; then
+              grep -E 'Alive|Version|TotalCapacity|AvailCapacity|MaxDiskUsedPct' <<<"$info"
               exit 0
             fi
             sleep 5
           done
-          echo "Doris BE not alive after 7.5 minutes"
+          echo "Doris BE not ready (alive + disk reported) after 7.5 minutes"
+          echo "$info"
           exit 1
 
       - name: Create schema, views, materialized view
