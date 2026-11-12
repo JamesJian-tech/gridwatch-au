@@ -1,0 +1,15 @@
+# secrets — copy .env.example to .env
+.env
+
+# Doris data and logs (docker compose volumes)
+data/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS / tooling
+.DS_Store
+.codegraph/

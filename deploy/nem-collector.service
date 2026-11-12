@@ -1,0 +1,23 @@
+# systemd unit for the live collector.
+# Install:
+#   sudo cp deploy/nem-collector.service /etc/systemd/system/
+#   (edit User=, WorkingDirectory=, EnvironmentFile= and the venv path below)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now nem-collector
+#   journalctl -u nem-collector -f
+
+[Unit]
+Description=AEMO NEMWEB -> Apache Doris collector
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=james
+WorkingDirectory=/opt/nem-doris
+EnvironmentFile=/opt/nem-doris/.env
+ExecStart=/opt/nem-doris/.venv/bin/python -m nemdoris live --interval 60
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
