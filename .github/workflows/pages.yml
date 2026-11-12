@@ -1,5 +1,5 @@
 # Static dashboard on GitHub Pages, no Doris involved.
-# Every 30 min: pull new NEMWEB DispatchIS files into the CSV store kept on the
+# Daily at 06:17 NEM time: pull new NEMWEB DispatchIS files into the CSV store kept on the
 # `site-data` branch (force-pushed as one commit so history stays small), rebuild
 # data/dashboard.json, and deploy site/ + data to Pages.
 # One-time setup: Settings -> Pages -> Build and deployment -> Source: GitHub Actions.
@@ -7,7 +7,9 @@ name: pages
 
 on:
   schedule:
-    - cron: "7,37 * * * *"
+    # 20:17 UTC = 06:17 AEST: the previous NEM day is complete; Current/ keeps ~2 days,
+    # and a skipped day is refilled from Archive/ by the gap check.
+    - cron: "17 20 * * *"
   workflow_dispatch:
     inputs:
       backfill_from:

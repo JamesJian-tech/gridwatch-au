@@ -51,7 +51,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
 ## GitHub Actions
 
 - `.github/workflows/ci.yml`：每次 push 或开 PR 时，在 Python 3.10 和 3.13 上跑 `pytest`。
-- `.github/workflows/pages.yml`：每 30 分钟更新一次 GitHub Pages 看板，见下一节。
+- `.github/workflows/pages.yml`：每天 NEM 时间 06:17 更新一次 GitHub Pages 看板，见下一节。Current/ 只保留大约 2 天，所以运行间隔不能超过 2 天，否则要靠 Archive 补数据。
 - `.github/workflows/integration.yml`：在 `ubuntu-24.04` runner 上用 `docker compose` 起真实的 Doris，依次执行全部 SQL、回填 1 天、做完整性和幂等检查、`live --once`、`load-duid`、`03_analysis.sql` 和刷新物化视图。改动 `nemdoris/`、`sql/` 或 `docker-compose.yml` 会自动触发，每周一 06:00 AEST 也会定时跑一次。这是开发机上唯一能接触到真实 Doris 的验证途径，加新表或新检查时，在它的 Verify 步骤里补上对应的断言。
 
 ## GitHub Pages 看板（`nemdoris/pages.py`、`site/`、`pages.yml`）

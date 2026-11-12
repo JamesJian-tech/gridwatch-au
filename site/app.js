@@ -273,7 +273,7 @@ async function main() {
     $("#meta").textContent = "数据加载失败";
     const div = document.createElement("div");
     div.className = "error";
-    div.textContent = `无法读取 data/dashboard.json（${e.message}）。数据由 GitHub Actions 每 30 分钟生成一次。`;
+    div.textContent = `无法读取 data/dashboard.json（${e.message}）。数据由 GitHub Actions 每天生成一次。`;
     document.querySelector("main").prepend(div);
     return;
   }

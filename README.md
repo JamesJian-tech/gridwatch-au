@@ -172,7 +172,7 @@ GitHub Actions 的机器每次跑完就销毁，只适合做验证。长期实�
 
 ### GitHub Pages 看板
 
-- **pages**（`.github/workflows/pages.yml`）：每 30 分钟从 NEMWEB 抓一次新的 DispatchIS 文件，生成静态看板并发布到 GitHub Pages。这个流程**不经过 Doris**。
+- **pages**（`.github/workflows/pages.yml`）：每天 NEM 时间 06:17 从 NEMWEB 抓取前一天以来的 DispatchIS 文件，生成静态看板并发布到 GitHub Pages。这个流程**不经过 Doris**。GitHub 的定时任务可能延迟，某天被跳过时，下次运行会从 Archive 补齐。
 - **数据存放**：5 分钟级的区域数据和联络线数据，以每天一个 CSV 的形式存在 `site-data` 分支上。这个分支每次运行都强制覆盖成单个提交，所以仓库历史不会越来越大。
 - **生成和页面**：`python -m nemdoris pages` 读取这些 CSV，生成 `data/dashboard.json`；`site/` 里的静态页面用 ECharts 把它画出来。
 
