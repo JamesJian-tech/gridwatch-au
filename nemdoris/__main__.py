@@ -1,4 +1,4 @@
-"""CLI:  python -m nemdoris {check,live,backfill,load-duid}
+"""CLI:  python -m nemdoris {check,live,backfill,load-duid,pages}
 
 Config comes from environment variables (see .env.example):
   DORIS_HOST, DORIS_HTTP_PORT, DORIS_QUERY_PORT, DORIS_USER, DORIS_PASSWORD, DORIS_DB
@@ -198,6 +198,24 @@ def cmd_load_duid(cfg, args) -> int:
     return 0
 
 
+def cmd_pages(_cfg, args) -> int:
+    from . import pages
+
+    store = pages.Store(args.store)
+    since = pages.parse_since(args.backfill_from, aemo.nem_now().date()) if args.backfill_from else None
+    try:
+        stats = pages.update(store, aemo.make_session(), since=since, max_files=args.max_files)
+        log.info("store updated: %s", stats)
+    except Exception as e:  # NEMWEB down: still rebuild the page from what the store has
+        log.error("NEMWEB update failed, building from existing store: %s", e)
+    data = pages.write_dashboard(store, args.out)
+    if data.get("empty"):
+        log.error("store is empty; nothing to show")
+        return 1
+    log.info("wrote %s (last interval %s, %d day(s))", args.out, data["last_interval"], len(data["daily"]["days"]))
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="nemdoris", description="AEMO NEMWEB -> Apache Doris")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -221,6 +239,12 @@ def main(argv=None) -> int:
     ld = sub.add_parser("load-duid", help="load AEMO registration list (.xlsx) or a CSV into duid_info")
     ld.add_argument("path")
 
+    pg = sub.add_parser("pages", help="update the static-site CSV store from NEMWEB and write dashboard JSON (no Doris)")
+    pg.add_argument("--store", required=True, help="store directory (the site-data branch checkout)")
+    pg.add_argument("--out", required=True, help="dashboard JSON path, e.g. _site/data/dashboard.json")
+    pg.add_argument("--backfill-from", help="also load Archive/ days from YYYY-MM-DD, or N days ago")
+    pg.add_argument("--max-files", type=int, default=None, help="cap new Current/ files (local preview)")
+
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -229,7 +253,7 @@ def main(argv=None) -> int:
 
     cfg = config_from_env()
     return {"check": cmd_check, "live": cmd_live, "backfill": cmd_backfill,
-            "load-duid": cmd_load_duid}[args.cmd](cfg, args)
+            "load-duid": cmd_load_duid, "pages": cmd_pages}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":
