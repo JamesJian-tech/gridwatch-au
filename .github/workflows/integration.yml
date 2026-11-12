@@ -1,0 +1,163 @@
+# End-to-end check against a real single-node Doris: schema + views + MV, a one-day
+# backfill from NEMWEB Archive/, completeness and idempotency checks, one live pass,
+# a DUID load, and every query in sql/03_analysis.sql.
+name: integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "NEM date to backfill (YYYY-MM-DD). Empty = 3 days ago."
+        required: false
+  schedule:
+    - cron: "0 20 * * 0" # Monday 06:00 AEST
+  push:
+    branches: [main]
+    paths:
+      - "nemdoris/**"
+      - "sql/**"
+      - "docker-compose.yml"
+      - "requirements.txt"
+      - ".github/workflows/integration.yml"
+  pull_request:
+    paths:
+      - "nemdoris/**"
+      - "sql/**"
+      - "docker-compose.yml"
+      - "requirements.txt"
+      - ".github/workflows/integration.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  doris:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      MYSQL: mysql --protocol=TCP -h127.0.0.1 -P9030 -uroot
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install collector
+        run: pip install -r requirements.txt
+
+      - name: Pick backfill day
+        env:
+          DAY_INPUT: ${{ inputs.day }}
+        run: |
+          DAY="${DAY_INPUT:-$(TZ=Etc/GMT-10 date -d '3 days ago' +%F)}"
+          [[ "$DAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad day: $DAY"; exit 1; }
+          echo "DAY=$DAY" >> "$GITHUB_ENV"
+          echo "Backfill day (NEM): $DAY"
+
+      - name: Host settings for Doris BE
+        run: |
+          sudo sysctl -w vm.max_map_count=2000000
+          sudo swapoff -a
+          command -v mysql || { sudo apt-get update && sudo apt-get install -y mysql-client; }
+
+      - name: Start Doris
+        run: docker compose up -d
+
+      - name: Wait for FE and BE
+        run: |
+          for i in $(seq 1 90); do
+            if $MYSQL -e 'SHOW BACKENDS\G' 2>/dev/null | grep -q 'Alive: true'; then
+              $MYSQL -e 'SELECT VERSION()'
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Doris BE not alive after 7.5 minutes"
+          exit 1
+
+      - name: Create schema, views, materialized view
+        run: |
+          $MYSQL < sql/01_schema.sql
+          $MYSQL < sql/02_views.sql
+          $MYSQL < sql/04_materialized_views.sql
+          # every file must be safe to re-run
+          $MYSQL < sql/01_schema.sql
+          $MYSQL < sql/02_views.sql
+          $MYSQL < sql/04_materialized_views.sql
+
+      - name: Backfill one day
+        run: python -m nemdoris backfill --start "$DAY" --end "$DAY"
+
+      - name: Verify backfill
+        run: |
+          q() { $MYSQL -N -B -e "$1"; }
+          q "SELECT source, file_name, n_rows FROM nem.ingest_log ORDER BY source"
+          files=$(q "SELECT COUNT(*) FROM nem.ingest_log")
+          [ "$files" -eq 2 ] || { echo "expected 2 archive files in ingest_log, got $files"; exit 1; }
+
+          echo "--- intervals per region (intervention = 0)"
+          q "SELECT regionid, COUNT(DISTINCT settlementdate), MIN(settlementdate), MAX(settlementdate)
+             FROM nem.dispatch_price WHERE intervention = 0 GROUP BY regionid ORDER BY regionid"
+          full=$(q "SELECT COUNT(*) FROM (SELECT regionid FROM nem.dispatch_price WHERE intervention = 0
+                    GROUP BY regionid HAVING COUNT(DISTINCT settlementdate) >= 288) t")
+          [ "$full" -eq 5 ] || { echo "expected 5 regions with >= 288 intervals, got $full"; exit 1; }
+
+          for t in dispatch_regionsum dispatch_interconnectorres unit_scada; do
+            n=$(q "SELECT COUNT(*) FROM nem.$t")
+            echo "$t: $n rows"
+            [ "$n" -gt 0 ] || { echo "$t is empty"; exit 1; }
+          done
+
+      - name: Re-run backfill is a no-op
+        run: |
+          q() { $MYSQL -N -B -e "$1"; }
+          before=$(q "SELECT (SELECT COUNT(*) FROM nem.unit_scada) + (SELECT COUNT(*) FROM nem.dispatch_price)")
+          python -m nemdoris backfill --start "$DAY" --end "$DAY"
+          after=$(q "SELECT (SELECT COUNT(*) FROM nem.unit_scada) + (SELECT COUNT(*) FROM nem.dispatch_price)")
+          echo "rows before=$before after=$after"
+          [ "$before" = "$after" ] || exit 1
+          [ "$(q 'SELECT COUNT(*) FROM nem.ingest_log')" -eq 2 ] || exit 1
+
+      - name: One live pass
+        run: |
+          python -m nemdoris live --once --max-files 2 --lookback-hours 2
+          n=$($MYSQL -N -B -e "SELECT COUNT(*) FROM nem.ingest_log")
+          echo "ingest_log rows: $n"
+          [ "$n" -gt 2 ] || { echo "live pass loaded nothing"; exit 1; }
+
+      - name: Load DUID CSV
+        run: |
+          printf 'duid,region,fuel_group\nLYA1,VIC1,Brown coal\nBW01,NSW1,Black coal\n' > "$RUNNER_TEMP/duid.csv"
+          python -m nemdoris load-duid "$RUNNER_TEMP/duid.csv"
+          [ "$($MYSQL -N -B -e 'SELECT COUNT(*) FROM nem.duid_info')" -eq 2 ] || exit 1
+
+      - name: Run every analysis query
+        run: $MYSQL --table < sql/03_analysis.sql
+
+      - name: Refresh materialized view
+        run: |
+          $MYSQL nem -e "REFRESH MATERIALIZED VIEW mv_region_hourly COMPLETE"
+          for i in $(seq 1 36); do
+            n=$($MYSQL -N -B -e "SELECT COUNT(*) FROM nem.mv_region_hourly" 2>/dev/null || echo 0)
+            if [ "$n" -gt 0 ]; then echo "mv_region_hourly: $n rows"; exit 0; fi
+            sleep 5
+          done
+          $MYSQL -e "SELECT * FROM tasks('type'='mv') WHERE MvName = 'mv_region_hourly'\G" || true
+          echo "mv_region_hourly still empty after 3 minutes"
+          exit 1
+
+      - name: Self-check
+        run: python -m nemdoris check
+
+      - name: Doris logs
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --tail 200
+          sudo sh -c 'tail -n 100 data/fe/log/fe.warn.log data/fe/log/*.out data/be/log/be.WARNING data/be/log/*.out' || true

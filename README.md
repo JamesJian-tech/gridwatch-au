@@ -161,7 +161,14 @@ Doris 兼容 MySQL 协议，Grafana 里添加一个 MySQL 数据源，主机填 
 
 `pytest tests` 共 12 个测试，覆盖 AEMO CSV 解析（含嵌套 zip 和多出来的新列）、类型转换、目录列表解析、Stream Load（用本地模拟的 FE→BE 307 跳转验证鉴权头没丢）、采集流程和 DUID 表格导入，全部通过。NEMWEB 的文件命名和目录结构已对照 2026 年 11 月的线上目录核实过。
 
-还**没有**在真实的 Doris 4.1 实例上跑过建表 SQL 和采集，第一次部署时建议先 `backfill` 一周，用 `check` 和 `03_analysis.sql` 里第 15、16 条查询确认数据完整（每个区域每天应有 288 个区间）。
+第一次部署时建议先 `backfill` 一周，用 `check` 和 `03_analysis.sql` 里第 15、16 条查询确认数据完整（每个区域每天应有 288 个区间）。
+
+### GitHub Actions
+
+- **ci**（`.github/workflows/ci.yml`）：每次 push 或开 PR 时，在 Python 3.10 和 3.13 上跑单元测试。
+- **integration**（`.github/workflows/integration.yml`）：在 GitHub 的 Ubuntu runner 上用 `docker compose` 起一套真实的 Doris，依次执行全部 SQL，回填 1 天并检查 5 个区域是否各有 288 个区间，重复回填确认不会重复写入，再跑一轮 `live --once`、导入 DUID CSV、执行 `03_analysis.sql` 全部查询、刷新物化视图。改动 `nemdoris/`、`sql/` 或 `docker-compose.yml` 时自动触发，每周一 06:00 AEST 定时跑一次，也可以在 Actions 页面手动运行并指定回填日期。
+
+GitHub Actions 的机器每次跑完就销毁，只适合做验证。长期实时采集仍然放在家用服务器上，用 systemd 运行。
 
 ## 可以继续扩展的方向
 
